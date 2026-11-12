@@ -39,6 +39,7 @@ BUILTIN_SKILLS = [
 CATALOG = [
     ("gemini", "Gemini", "AI models", "Chat, voice, vision and the 3D builder.", "key"),
     ("claude", "Claude", "AI models", "Anthropic models for builds and long answers.", "key"),
+    ("openrouter", "OpenRouter", "AI models", "One key, hundreds of models (GPT, Claude, Llama, Mistral, DeepSeek and more).", "key"),
     ("openai", "OpenAI", "AI models", "GPT models for chat and image generation.", "key"),
     ("mistral", "Mistral", "AI models", "Open-weight models, strong on European languages.", "key"),
     ("llama", "Llama", "AI models", "Meta models through a hosted API.", "key"),
@@ -70,7 +71,12 @@ CATALOG = [
     ("webhooks", "Webhooks", "Data and tools", "Send events to your endpoints when notes change.", "url"),
     ("zapier", "Zapier", "Data and tools", "Link Allaya to thousands of other apps.", "url"),
 ]
-ACTIVE = {"gemini", "claude", "ollama"}          # connectors the app actually calls today
+ACTIVE = {"gemini", "claude", "ollama", "openrouter"}          # connectors the app actually calls today
+# connector id -> (provider name in config.json, secret key, model key, default model)
+CHAT = {"gemini": ("gemini", "gemini_api_key", "gemini_chat_model", "gemini-flash-lite-latest"),
+        "claude": ("anthropic", "anthropic_api_key", "model", "claude-opus-5-5"),
+        "openrouter": ("openrouter", "openrouter_api_key", "openrouter_model", "openrouter/auto"),
+        "ollama": ("ollama", "ollama_url", "ollama_model", "qwen2.5:3b")}
 
 
 def load():
@@ -304,6 +310,8 @@ def _secret_of(c, cid):
         return c.get("anthropic_api_key", "")
     if cid == "ollama":
         return c.get("ollama_url", "")
+    if cid == "openrouter":
+        return c.get("openrouter_api_key", "")
     return (c.get("connectors") or {}).get(cid, "")
 
 
@@ -319,8 +327,9 @@ def connectors_list():
         ok = _real(v)
         tail = ("…" + str(v)[-4:]) if ok and kind == "key" and len(str(v)) > 8 else ("set" if ok and kind == "key" else (str(v) if ok else ""))
         out.append({"id": cid, "name": name, "group": group, "desc": desc, "kind": kind, "connected": ok,
-                    "detail": tail, "used": cid in ACTIVE,
-                    "primary": (c.get("provider") == {"gemini": "gemini", "claude": "anthropic", "ollama": "ollama"}.get(cid))})
+                    "detail": tail, "used": cid in ACTIVE, "chat": cid in CHAT,
+                    "primary": cid in CHAT and c.get("provider") == CHAT[cid][0],
+                    "model": c.get(CHAT[cid][2], CHAT[cid][3]) if cid in CHAT else ""})
     return out
 
 
@@ -339,6 +348,8 @@ def connector_set(cid, value):
             c["anthropic_api_key"] = value
         elif cid == "ollama":
             c["ollama_url"] = value
+        elif cid == "openrouter":
+            c["openrouter_api_key"] = value
         else:
             c.setdefault("connectors", {})[cid] = value
         _put_cfg(c)
@@ -357,6 +368,10 @@ def connector_clear(cid):
             c["anthropic_api_key"] = ""
         elif cid == "ollama":
             pass
+        elif cid == "openrouter":
+            c["openrouter_api_key"] = ""
+            if c.get("provider") == "openrouter":          # never leave the app pointing at a key that is gone
+                c["provider"] = "local"
         else:
             (c.get("connectors") or {}).pop(cid, None)
         _put_cfg(c)
@@ -364,10 +379,24 @@ def connector_clear(cid):
 
 
 def set_provider(p):
-    if p not in ("local", "gemini", "ollama", "anthropic"):
+    if p not in ("local", "gemini", "ollama", "anthropic", "openrouter"):
         raise ValueError("unknown provider")
     with LK:
         c = _cfg()
         c["provider"] = p
         _put_cfg(c)
     audit("Active AI changed", p)
+
+
+def set_model(cid, model):
+    """Pick which model a chat connector uses (e.g. openrouter: anthropic/claude-sonnet-4.5)."""
+    if cid not in CHAT:
+        raise ValueError("this connector has no model setting")
+    model = str(model).strip()
+    if not model or len(model) > 120 or any(ch.isspace() for ch in model):
+        raise ValueError("enter a model id, e.g. openai/gpt-4o-mini")
+    with LK:
+        c = _cfg()
+        c[CHAT[cid][2]] = model
+        _put_cfg(c)
+    audit("Model changed", f"{cid}: {model}")

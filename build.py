@@ -26,6 +26,7 @@ def load_config():
     c = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"provider": "local", "notes_dir": "./notes"}
     import os                                   # on a host, secrets come from environment variables
     for env, key in (("GEMINI_API_KEY", "gemini_api_key"), ("ANTHROPIC_API_KEY", "anthropic_api_key"),
+                     ("OPENROUTER_API_KEY", "openrouter_api_key"), ("OPENROUTER_MODEL", "openrouter_model"),
                      ("ALLAYA_PROVIDER", "provider")):
         if os.environ.get(env):
             c[key] = os.environ[env]

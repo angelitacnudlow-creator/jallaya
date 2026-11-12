@@ -138,6 +138,63 @@ def build_context(hits, cap=36000):
 SRC_RE = re.compile(r"\s*SOURCES:\s*(.*?)\s*$", re.I | re.S)
 
 
+def openrouter_chat(c, system, msgs, max_tokens=800):
+    """OpenRouter speaks the OpenAI chat format: one key reaches many models."""
+    key = c.get("openrouter_api_key", "")
+    if not key or "PUT-YOUR" in key:
+        raise RuntimeError("openrouter_api_key is not set")
+    body = json.dumps({"model": c.get("openrouter_model") or "openrouter/auto", "max_tokens": max_tokens, "temperature": 0.7,
+                       "messages": [{"role": "system", "content": system}] + msgs}).encode()
+    req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions", body,
+                                 {"Content-Type": "application/json", "Authorization": "Bearer " + key,
+                                  "X-Title": "Allaya"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            d = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read()).get("error", {}).get("message", "")
+        except Exception:
+            msg = ""
+        raise RuntimeError(f"OpenRouter {e.code}: {msg or e.reason}"[:200])
+    text = ((d.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    if not text.strip():
+        raise RuntimeError("OpenRouter returned an empty reply")
+    return text.strip()
+
+
+def provider_test(pid):
+    """One tiny call to prove a connector's key and model work. Returns (ok, message)."""
+    c = dict(cfg())
+    t0 = time.time()
+    try:
+        c["provider"] = pid
+        if pid == "openrouter":
+            openrouter_chat(c, "Reply with the single word OK.", [{"role": "user", "content": "ping"}], 20)
+        elif pid == "gemini":
+            key = c.get("gemini_api_key", "")
+            if not key or "PUT-YOUR" in key:
+                raise RuntimeError("gemini_api_key is not set")
+            model = c.get("gemini_chat_model") or c.get("gemini_fast_model") or "gemini-flash-lite-latest"
+            req = urllib.request.Request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                                         json.dumps({"contents": [{"role": "user", "parts": [{"text": "Reply OK"}]}]}).encode(),
+                                         {"Content-Type": "application/json", "x-goog-api-key": key})
+            urllib.request.urlopen(req, timeout=20).read()
+        elif pid == "anthropic":
+            key = c.get("anthropic_api_key", "")
+            if not key or "PUT-YOUR" in key:
+                raise RuntimeError("anthropic_api_key is not set")
+            import anthropic
+            anthropic.Anthropic(api_key=key).messages.create(model=c["model"], max_tokens=10, messages=[{"role": "user", "content": "Reply OK"}])
+        elif pid == "ollama":
+            urllib.request.urlopen(c["ollama_url"] + "/api/tags", timeout=5).read()
+        else:
+            return False, "nothing to test"
+    except Exception as e:
+        return False, str(e)[:200]
+    return True, f"Works ({int((time.time() - t0) * 1000)} ms)"
+
+
 def llm_answer(q, hits, lang):
     c = cfg()
     ctx = build_context(hits)
@@ -173,6 +230,8 @@ def llm_answer(q, hits, lang):
         if not text:
             raise RuntimeError("Gemini returned an empty reply")
         return text
+    if c["provider"] == "openrouter":
+        return openrouter_chat(c, admin.persona(PERSONA_PROMPT), msgs, 800)
     key = c.get("anthropic_api_key", "")
     if not key or "PUT-YOUR" in key:
         raise RuntimeError("anthropic_api_key is not set")
@@ -773,6 +832,12 @@ def admin_api(method, path, data, query):
     if p == "provider/set":
         ad.set_provider(data.get("provider", ""))
         return {"ok": True}
+    if p == "provider/model":
+        ad.set_model(data.get("id", ""), data.get("model", ""))
+        return {"ok": True}
+    if p == "provider/test":
+        ok, msg = provider_test(str(data.get("provider", "")))
+        return {"ok": ok, "message": msg}
     raise ValueError("unknown admin call")
 
 
