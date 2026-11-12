@@ -21,14 +21,23 @@ def clean(text):
     return re.sub(r"[ \t]+", " ", text).strip()
 
 
-def load_config():
+import os
+# On a host, set ALLAYA_DATA to a persistent volume (e.g. /data): keys and admin settings saved there survive redeploys.
+STORE = Path(os.environ["ALLAYA_DATA"]) if os.environ.get("ALLAYA_DATA") else ROOT
+
+
+def load_config(with_env=True):
     p = ROOT / "config.json"
     c = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"provider": "local", "notes_dir": "./notes"}
-    import os                                   # on a host, secrets come from environment variables
+    sp = STORE / "config.json"
+    if sp != p and sp.exists():
+        c.update(json.loads(sp.read_text(encoding="utf-8")))
+    if not with_env:
+        return c                                  # on a host, secrets come from environment variables
     for env, key in (("GEMINI_API_KEY", "gemini_api_key"), ("ANTHROPIC_API_KEY", "anthropic_api_key"),
                      ("OPENROUTER_API_KEY", "openrouter_api_key"), ("OPENROUTER_MODEL", "openrouter_model"),
                      ("ALLAYA_PROVIDER", "provider")):
-        if os.environ.get(env):
+        if os.environ.get(env) and ((not sp.exists()) if key == "provider" else not c.get(key)):     # keys saved in the admin win over env
             c[key] = os.environ[env]
     return c
 

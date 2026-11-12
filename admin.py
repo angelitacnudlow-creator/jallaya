@@ -6,7 +6,9 @@ from pathlib import Path
 import build
 
 ROOT = Path(__file__).parent
-DATA = ROOT / "admin_data.json"
+DATA = build.STORE / "admin_data.json"
+if not DATA.exists() and (ROOT / "admin_data.json").exists() and DATA.parent.is_dir():
+    shutil.copy(ROOT / "admin_data.json", DATA)            # first run on a fresh volume: start from the bundled defaults
 AUDIT = ROOT / "admin_audit.jsonl"
 TRASH = ROOT / "notes_trash"
 LK = threading.RLock()
@@ -294,13 +296,14 @@ def rules_save(r):
 
 # ---------- connectors ----------
 def _cfg():
-    return json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    return build.load_config(with_env=False)
 
 
 def _put_cfg(c):
-    tmp = (ROOT / "config.json").with_suffix(".tmp")
+    dest = build.STORE / "config.json"
+    tmp = dest.with_suffix(".tmp")
     tmp.write_text(json.dumps(c, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(ROOT / "config.json")
+    tmp.replace(dest)
 
 
 def _secret_of(c, cid):
