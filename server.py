@@ -163,6 +163,31 @@ def openrouter_chat(c, system, msgs, max_tokens=800):
     return text.strip()
 
 
+_ORM = {"t": 0, "d": []}
+
+
+def openrouter_models():
+    """Public OpenRouter catalogue (no key needed), cached 10 minutes. Free = zero prompt and completion price."""
+    if _ORM["d"] and time.time() - _ORM["t"] < 600:
+        return _ORM["d"]
+    req = urllib.request.Request("https://openrouter.ai/api/v1/models", headers={"User-Agent": "Allaya"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        raw = json.loads(r.read()).get("data", [])
+    out = []
+    for m in raw:
+        pr = m.get("pricing") or {}
+        try:
+            free = float(pr.get("prompt", 1)) == 0 and float(pr.get("completion", 1)) == 0
+        except Exception:
+            free = False
+        if "text" not in ((m.get("architecture") or {}).get("output_modalities") or ["text"]):
+            continue
+        out.append({"id": m["id"], "name": m.get("name") or m["id"], "free": free, "ctx": m.get("context_length") or 0})
+    out.sort(key=lambda x: (not x["free"], x["name"].lower()))
+    _ORM.update(t=time.time(), d=out)
+    return out
+
+
 def provider_test(pid):
     """One tiny call to prove a connector's key and model work. Returns (ok, message)."""
     c = dict(cfg())
@@ -835,6 +860,8 @@ def admin_api(method, path, data, query):
     if p == "provider/model":
         ad.set_model(data.get("id", ""), data.get("model", ""))
         return {"ok": True}
+    if p == "provider/models":
+        return {"models": openrouter_models()}
     if p == "provider/test":
         ok, msg = provider_test(str(data.get("provider", "")))
         return {"ok": ok, "message": msg}
